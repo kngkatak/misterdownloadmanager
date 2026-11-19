@@ -229,6 +229,7 @@ fn tell(app: &mut crate::app::App) -> bool {
                         a.minutes,
                         a.qr
                     );
+                    mdm_cli::print_browser_links(&a);
                 }
             }
             true

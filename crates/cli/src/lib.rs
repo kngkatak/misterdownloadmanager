@@ -570,6 +570,67 @@ fn add_command_with(
     })
 }
 
+/// Formatted browser pairing URLs for reachable addresses and configured hosts.
+pub fn browser_pair_urls(a: &mdm_ipc::api::PairAnswer) -> Vec<String> {
+    let mut links = Vec::new();
+    let code = &a.code;
+
+    for url in &a.urls {
+        let base = url.trim_end_matches('/');
+        let link = format!("{base}/#pair={code}");
+        if !links.contains(&link) {
+            links.push(link);
+        }
+    }
+
+    if let Ok(hosts) = std::env::var("MDM_REMOTE_HOSTS") {
+        let port_suffix = a
+            .urls
+            .first()
+            .and_then(|u| {
+                let u = u.trim_end_matches('/');
+                let pos = u.rfind(':')?;
+                let part = &u[pos..];
+                if !part[1..].is_empty() && part[1..].chars().all(|c| c.is_ascii_digit()) {
+                    Some(part)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or("");
+
+        for host in hosts.split(',').map(str::trim).filter(|h| !h.is_empty()) {
+            let host = host
+                .strip_prefix("https://")
+                .or_else(|| host.strip_prefix("http://"))
+                .unwrap_or(host)
+                .trim_end_matches('/');
+            let host_with_port = if host.contains(':') {
+                host.to_string()
+            } else {
+                format!("{host}{port_suffix}")
+            };
+            let link = format!("https://{host_with_port}/#pair={code}");
+            if !links.contains(&link) {
+                links.push(link);
+            }
+        }
+    }
+
+    links
+}
+
+/// Print clickable browser pairing links, indented.
+pub fn print_browser_links(a: &mdm_ipc::api::PairAnswer) {
+    let links = browser_pair_urls(a);
+    if !links.is_empty() {
+        println!("Or pair directly in a browser:");
+        for link in &links {
+            println!("  {link}");
+        }
+    }
+}
+
 /// `pair`: a new pairing code from the running app, printed for a person (or raw JSON with `--json`).
 fn pair(json: bool) -> anyhow::Result<()> {
     if json {
@@ -596,6 +657,7 @@ fn pair(json: bool) -> anyhow::Result<()> {
                 a.code.get(4..).unwrap_or_default(),
                 a.minutes
             );
+            print_browser_links(&a);
             Ok(())
         }
         Err(e) => {
@@ -2722,6 +2784,18 @@ mod tests {
             Cli::try_parse_from(["misterdownloadmanager-cli", "--json", "pair"]).unwrap();
         assert!(matches!(cli_json.cmd, Cmd::Pair));
         assert!(cli_json.json);
+    }
+
+    #[test]
+    fn browser_pair_urls_formats_links() {
+        let answer = mdm_ipc::api::PairAnswer {
+            code: "12345678".into(),
+            urls: vec!["https://192.168.1.10:8463/".into()],
+            minutes: 15,
+            qr: String::new(),
+        };
+        let urls = browser_pair_urls(&answer);
+        assert_eq!(urls, vec!["https://192.168.1.10:8463/#pair=12345678"]);
     }
 
     fn args(a: &[&str]) -> Vec<OsString> {
